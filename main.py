@@ -106,7 +106,8 @@ class Strg:
     def open_csv(path, language_overwrite):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
-        language_overwrite = {languages.split(">")[0]: languages.split(">")[1] for languages in language_overwrite.split() if languages != []}
+        language_overwrite = {languages.split(">")[0]: languages.split(">")[1]
+                              for languages in language_overwrite.split() if languages != []}
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
         strgs = []
@@ -177,13 +178,15 @@ class Font:
         if magic != self.MAGIC:
             raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and requiered to be {self.MAGIC}.")
         if self.version == 4:
-            self.width, self.height, self.vertical_offset, self.line_margin, self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
+            self.width, self.height, self.vertical_offset, self.line_margin, \
+                self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
             self.font_name = reader.read_ansi()
             self.save_path = f"fonts/{self.font_name} {self.font_size} {self.id}"
             self.texture_id, self.texture_mode, glyph_count = reader.read(">3L")
             self.texture_id = hex(self.texture_id)[2:]
             self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
-            self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2] for i in reader.iter_read(">2Hl", reader.read(">L"))}
+            self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2]
+                            for i in reader.iter_read(">2Hl", reader.read(">L"))}
             self.texture = FontTxtr()
             self.texture.from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR")
         else:
@@ -195,7 +198,8 @@ class Font:
 
 
 class FontGlyph:
-    def __init__(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance, right_padding, width, height, vertical_offset, kerning_start_index):
+    def __init__(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance,
+                 right_padding, width, height, vertical_offset, kerning_start_index):
         self.character = Font.decode_character(character)
         self.top_left_uv = [left, top]
         self.bottom_right_uv = [right, bottom]
@@ -245,7 +249,7 @@ class FontTxtr:
         self.palette_colors = [int(i[0]) for i in reader.iter_read(">H", self.palette_width * self.palette_height)]
         block_size = [8, 8]
         blocks_in_row_count = ceil(self.size[0] / block_size[0])
-        self.images = [Surface(self.size, 0, 8) for i in range(4)]
+        self.images = [Surface(self.size, 0, 8)] * 4
         pixels_count = blocks_in_row_count * ceil(self.size[1] / block_size[1]) * block_size[0] * block_size[1]
         for pixel_index, pixel in enumerate(reader.read_nibbles(pixels_count)):
             for i, image in enumerate(self.images):
@@ -258,7 +262,8 @@ class FontTxtr:
         pixel_in_block_index = byte_offset % 64
         block_coords = [block_index % blocks_in_row_count, block_index // blocks_in_row_count]
         pixel_in_block_coords = [pixel_in_block_index % 8, pixel_in_block_index // 8]
-        return block_coords[0] * block_size[0] + pixel_in_block_coords[0], block_index[1] * block_size[1] + pixel_in_block_index[1]
+        return [block_coords[0] * block_size[0] + pixel_in_block_coords[0],
+                block_index[1] * block_size[1] + pixel_in_block_index[1]]
 
     def save_as_pngs(self, path):
         for i, layer in enumerate(self.images):
