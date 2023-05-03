@@ -184,7 +184,7 @@ class Font:
 
 class FontGlyph:
     def __init__(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance, right_padding, width, height, vertical_offset, kerning_start_index):
-        self.character = character.to_bytes(2, "little").decode("UTF-16")
+        self.character = Font.decode_character(character)
         self.top_left_uv = [left, top]
         self.bottom_right_uv = [right, bottom]
         self.layer_index = layer_index
