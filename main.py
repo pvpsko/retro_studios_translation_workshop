@@ -279,6 +279,12 @@ def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
         Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
 
 
+def repack_strgs(strg_pak_names, paks_folder, strgs_folder, language_overwrite):
+    for path in strg_pak_names:
+        [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
+         Strg.open_csv(f"{strgs_folder}/{path}", language_overwrite)]
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("-e", "--extract", choices=["strgs"], action="append", default=[])
@@ -301,8 +307,12 @@ def main():
             extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.additional_languages)
     for format_ in arguments.repack:
         if format_ == "strgs":
-            for path in listdir(arguments.strgs_folder):
-                [strg.save_as_strg(f"{arguments.paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in Strg.open_csv(f"{arguments.strgs_folder}/{path}", arguments.language_overwrite)]
+            if arguments.paks is not None:
+                strg_pak_names = [pak_name for pak_name in listdir(arguments.strgs_folder) if
+                                  pak_name.lower().split(".")[0] in [argument.lower() for argument in arguments.paks]]
+            else:
+                strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
+            repack_strgs(strg_pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.language_overwrite)
 
 
 if __name__ == "__main__":
