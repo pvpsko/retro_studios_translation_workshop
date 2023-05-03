@@ -280,7 +280,6 @@ if __name__ == "__main__":
     parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
     parser.add_argument("-lo", "--language_overwrite", default="")
     arguments = parser.parse_args()
-    print(arguments)
     if arguments.extract == [] and arguments.repack == []:
         parser.print_help()
     for format_ in arguments.extract:
