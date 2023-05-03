@@ -2,6 +2,8 @@ from os import listdir
 from argparse import ArgumentParser
 import struct
 import csv
+from math import ceil
+from pygame import Surface, image
 
 
 class FileReader:
@@ -34,6 +36,15 @@ class FileReader:
         string = self.raw_bytes[self.offset: end_offset].decode("ANSI")
         self.offset = end_offset
         return string
+
+    def read_nibbles(self, count):
+        if count % 2 != 0:
+            raise Exception("File reader can't read odd number of nibbles")
+        nibbles = []
+        for byte, in self.iter_read(">B", count // 2):
+            nibbles.append(byte >> 4)
+            nibbles.append(byte & 16)
+        return nibbles
 
 
 class Strg:
@@ -92,7 +103,7 @@ class Strg:
             file.write(buffer + b"\xFF" * (32 - len(buffer) % 32))
     
     @staticmethod
-    def open_csv(file, language_overwrite):
+    def open_csv(path, language_overwrite):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
         language_overwrite = {languages.split(">")[0]: languages.split(">")[1] for languages in language_overwrite.split() if languages != []}
@@ -157,7 +168,7 @@ class Font:
         ...
 
     def from_font(self, path):
-        self.pack_path = "/".join(path.split("/")[: -1])
+        self.pak_path = "/".join(path.split("/")[: -1])
         self.file_name = path.split("/")[-1]
         self.id = self.file_name.split('.')[0].upper()
         with open(path, "rb") as file:
@@ -173,7 +184,8 @@ class Font:
             self.texture_id = hex(self.texture_id)[2:]
             self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2] for i in reader.iter_read(">2Hl", reader.read(">L"))}
-            self.texture = Texture(f"{self.pak_path}/{self.texture_id}.TXTR", self.save_path, self.texture_mode)
+            self.texture = FontTxtr()
+            self.texture.from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR", self.save_path)
         else:
             raise Exception("Unsupported version")
 
@@ -213,6 +225,42 @@ class FontGlyph:
                 "Size":                self.size,
                 "Vertical offset":     self.vertical_offset,
                 "Kerning start index": self.kerning_start_index}
+
+
+class FontTxtr:
+    def __init__(self):
+        ...
+
+    def from_txtr(self, path):
+        self.path = path
+        with open(path, "rb") as file:
+            reader = FileReader(file.read())
+        self.image_format, width, height, self.mipmap_count, self.palette_format = reader.read(">L2H2L")
+        self.size = [width, height]
+        if self.image_format != 4:
+            raise Exception(f"Wrong/unsupported texture format in file {path}")
+        self.palette_width, self.palette_height = reader.read(">2H")
+        self.palette_colors = [int(i[0]) for i in reader.iter_read(">H", self.palette_width * self.palette_height)]
+        block_size = [8, 8]
+        blocks_in_row_count = ceil(self.size[0] / block_size[0])
+        self.images = [Surface(self.size, 0, 8) for i in range(4)]
+        pixels_count = blocks_in_row_count * ceil(self.size[1] / block_size[1]) * block_size[0] * block_size[1]
+        for pixel_index, pixel in enumerate(reader.read_nibbles(pixels_count)):
+            for i, image in enumerate(self.images):
+                if (pixel >> i) & 1:
+                    image.set_at(self.translate_coords(pixel_index, block_size, blocks_in_row_count), "White")
+
+    @staticmethod
+    def translate_coords(self, byte_offset, block_size, blocks_in_row_count):
+        block_index = byte_offset // 64
+        pixel_in_block_index = byte_offset % 64
+        block_coords = [block_index % blocks_in_row_count, block_index // blocks_in_row_count]
+        pixel_in_block_coords = [pixel_in_block_index % 8, pixel_in_block_index // 8]
+        return block_coords[0] * block_size[0] + pixel_in_block_coords[0], block_index[1] * block_size[1] + pixel_in_block_index[1]
+
+    def save_as_pngs(self, path):
+        for i, layer in enumerate(self.images):
+            image.save(layer, f"{path}/Layer {i}.png")
 
 
 if __name__ == "__main__":
