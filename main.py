@@ -185,7 +185,7 @@ class Font:
             self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2] for i in reader.iter_read(">2Hl", reader.read(">L"))}
             self.texture = FontTxtr()
-            self.texture.from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR", self.save_path)
+            self.texture.from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR")
         else:
             raise Exception("Unsupported version")
 
@@ -251,7 +251,7 @@ class FontTxtr:
                     image.set_at(self.translate_coords(pixel_index, block_size, blocks_in_row_count), "White")
 
     @staticmethod
-    def translate_coords(self, byte_offset, block_size, blocks_in_row_count):
+    def translate_coords(byte_offset, block_size, blocks_in_row_count):
         block_index = byte_offset // 64
         pixel_in_block_index = byte_offset % 64
         block_coords = [block_index % blocks_in_row_count, block_index // blocks_in_row_count]
