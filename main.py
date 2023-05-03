@@ -220,9 +220,11 @@ class FontGlyph:
                 "Top":                 self.top_left_xy[1],
                 "Bottom":              self.bottom_right_xy[1],
                 "Layer index":         self.layer_index,
-                "Padding":             self.padding,
+                "Left padding":        self.padding[0],
+                "Right padding":       self.padding[1],
                 "Print head advance":  self.print_head_advance,
-                "Size":                self.size,
+                "Width":               self.size[0],
+                "Height":              self.size[1],
                 "Vertical offset":     self.vertical_offset,
                 "Kerning start index": self.kerning_start_index}
 
