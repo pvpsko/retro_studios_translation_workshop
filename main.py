@@ -29,6 +29,12 @@ class FileReader:
         self.offset = end_offset
         return string
 
+    def read_ansi(self):
+        end_offset = self.raw_bytes.find(b"\x00", self.offset)
+        string = self.raw_bytes[self.offset: end_offset].decode("ANSI")
+        self.offset = end_offset
+        return string
+
 
 class Strg:
     MAGIC = 0x87654321
@@ -44,7 +50,7 @@ class Strg:
             reader = FileReader(file.read())
         magic, self.version = reader.read(">LL")
         if magic != self.MAGIC:
-            raise Exception(f"Wrong MAGIC in file {path}")
+            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and requiered to be {self.MAGIC}.")
         if self.version > 0:
             raise Exception(f"Unsupported VERSION in file {path}")
         language_count, string_count = reader.read(">LL")
@@ -87,7 +93,8 @@ class Strg:
     
     @staticmethod
     def open_csv(file, language_overwrite):
-        raw_data = [i for i in csv.reader(file, dialect="unix")]
+        with open(path, "rt", encoding="UTF-8") as file:
+            raw_data = [i for i in csv.reader(file, dialect="unix")]
         language_overwrite = {languages.split(">")[0]: languages.split(">")[1] for languages in language_overwrite.split() if languages != []}
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
@@ -143,9 +150,69 @@ class Strg:
         return count
 
 
-class Dsp:
+class Font:
+    MAGIC = 0x464F4E54
+
     def __init__(self):
         ...
+
+    def from_font(self, path):
+        self.pack_path = "/".join(path.split("/")[: -1])
+        self.file_name = path.split("/")[-1]
+        self.id = self.file_name.split('.')[0].upper()
+        with open(path, "rb") as file:
+            reader = FileReader(file.read())
+        magic, self.version = reader.read(">LL")
+        if magic != self.MAGIC:
+            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and requiered to be {self.MAGIC}.")
+        if self.version == 4:
+            self.width, self.height, self.vertical_offset, self.line_margin, self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
+            self.font_name = reader.read_ansi()
+            self.save_path = f"fonts/{self.font_name} {self.font_size} {self.id}"
+            self.texture_id, self.texture_mode, glyph_count = reader.read(">3L")
+            self.texture_id = hex(self.texture_id)[2:]
+            self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
+            self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2] for i in reader.iter_read(">2Hl", reader.read(">L"))}
+            self.texture = Texture(f"{self.pak_path}/{self.texture_id}.TXTR", self.save_path, self.texture_mode)
+        else:
+            raise Exception("Unsupported version")
+
+    @staticmethod
+    def decode_character(character):
+        return character.to_bytes(2, "little").decode("UTF-16")
+
+
+class FontGlyph:
+    def __init__(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance, right_padding, width, height, vertical_offset, kerning_start_index):
+        self.character = character.to_bytes(2, "little").decode("UTF-16")
+        self.top_left_uv = [left, top]
+        self.bottom_right_uv = [right, bottom]
+        self.layer_index = layer_index
+        self.padding = [left_padding, right_padding]
+        self.print_head_advance = print_head_advance
+        self.size = [width, height]
+        self.vertical_offset = vertical_offset
+        self.kerning_start_index = kerning_start_index
+
+    def to_xy(self, texture_size):
+        self.top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
+        self.bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
+
+    @staticmethod
+    def translate_uv_to_xy(uv, texture_size):
+        return [texture_size[0] * uv[0], texture_size[1] * uv[1]]
+
+    def get_data(self):
+        return {"Left":                self.top_left_xy[0],
+                "Right":               self.bottom_right_xy[0],
+                "Top":                 self.top_left_xy[1],
+                "Bottom":              self.bottom_right_xy[1],
+                "Layer index":         self.layer_index,
+                "Padding":             self.padding,
+                "Print head advance":  self.print_head_advance,
+                "Size":                self.size,
+                "Vertical offset":     self.vertical_offset,
+                "Kerning start index": self.kerning_start_index}
 
 
 if __name__ == "__main__":
@@ -173,5 +240,4 @@ if __name__ == "__main__":
     for format_ in arguments.repack:
         if format_ == "strgs":
             for path in listdir(arguments.strgs_foulder):
-                with open(f"{arguments.strgs_foulder}/{path}", "rt", encoding="UTF-8") as file:
-                    [strg.save_as_strg(f"{arguments.paks_foulder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in Strg.open_csv(file, arguments.language_overwrite)]
+                [strg.save_as_strg(f"{arguments.paks_foulder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in Strg.open_csv(f"{arguments.strgs_foulder}/{path}", arguments.language_overwrite)]
