@@ -61,7 +61,7 @@ class Strg:
             reader = FileReader(file.read())
         magic, self.version = reader.read(">LL")
         if magic != self.MAGIC:
-            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and requiered to be {self.MAGIC}.")
+            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and required to be {self.MAGIC}.")
         if self.version > 0:
             raise Exception(f"Unsupported VERSION in file {path}")
         language_count, string_count = reader.read(">LL")
@@ -159,7 +159,7 @@ class Strg:
             if count is None:
                 count = len(self.strings[language])
             elif count != len(self.strings[language]):
-                raise Exception(f"({self.id}) Strings count in diferrent languages are not the same")
+                raise Exception(f"({self.id}) Strings count in different languages are not the same")
         return count
 
 
@@ -177,7 +177,7 @@ class Font:
             reader = FileReader(file.read())
         magic, self.version = reader.read(">LL")
         if magic != self.MAGIC:
-            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and requiered to be {self.MAGIC}.")
+            raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and required to be {self.MAGIC}.")
         if self.version == 4:
             self.width, self.height, self.vertical_offset, self.line_margin, \
                 self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
