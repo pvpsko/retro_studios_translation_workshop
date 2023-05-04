@@ -7,33 +7,33 @@ from pygame import Surface, image
 
 
 class FileReader:
-    def __init__(self, raw_bytes):
+    def __init__(self, bytes_):
         self.offset = 0
-        self.raw_bytes = raw_bytes
+        self.bytes = bytes_
 
     def read(self, format_):
         size = struct.calcsize(format_)
-        readed_data = struct.unpack(format_, self.raw_bytes[self.offset: self.offset + size])
+        data = struct.unpack(format_, self.bytes[self.offset: self.offset + size])
         self.offset += size
-        return readed_data
+        return data
 
     def iter_read(self, format_, count):
         size = struct.calcsize(format_) * count
-        readed_data = struct.iter_unpack(format_, self.raw_bytes[self.offset: self.offset + size])
+        data = struct.iter_unpack(format_, self.bytes[self.offset: self.offset + size])
         self.offset += size
-        return [i for i in readed_data]
+        return [i for i in data]
 
     def read_utf16be(self):
-        end_offset = self.raw_bytes.find(b"\x00\x00", self.offset)
+        end_offset = self.bytes.find(b"\x00\x00", self.offset)
         while (end_offset - self.offset) % 2 != 0 and end_offset != -1:
-            self.offset = self.raw_bytes.find(b"\x00\x00", end_offset)
-        string = self.raw_bytes[self.offset: end_offset].decode("UTF-16BE")
+            self.offset = self.bytes.find(b"\x00\x00", end_offset)
+        string = self.bytes[self.offset: end_offset].decode("UTF-16BE")
         self.offset = end_offset
         return string
 
     def read_ansi(self):
-        end_offset = self.raw_bytes.find(b"\x00", self.offset)
-        string = self.raw_bytes[self.offset: end_offset].decode("ANSI")
+        end_offset = self.bytes.find(b"\x00", self.offset)
+        string = self.bytes[self.offset: end_offset].decode("ANSI")
         self.offset = end_offset
         return string
 
