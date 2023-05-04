@@ -271,48 +271,51 @@ class FontTxtr:
             image.save(layer, f"{path}/Layer {i}.png")
 
 
-def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
-    strg_names = {pak_name: [file_name for file_name in listdir(f"{paks_folder}/{pak_name}")
-                  if file_name.endswith(".STRG")] for pak_name in pak_names}
-    strgs = {pak_name: [Strg().open_strg(f"{paks_folder}/{pak_name}/{strg_name}")
-             for strg_name in strg_names[pak_name]] for pak_name in strg_names}
-    for pak_name in strgs:
-        Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
+class Main:
+    def __init__(self):
+        parser = ArgumentParser()
+        parser.add_argument("-e", "--extract", choices=["strgs"], action="append", default=[])
+        parser.add_argument("-r", "--repack", choices=["strgs"], action="append", default=[])
+        parser.add_argument("-p", "--paks", nargs="*")
+        parser.add_argument("-pf", "--paks_folder", default="paks")
+        parser.add_argument("-sf", "--strgs_folder", default="strgs")
+        parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
+        parser.add_argument("-lo", "--language_overwrite", default="")
+        arguments = parser.parse_args()
+        pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
+        if arguments.paks is not None:
+            pak_names = [pak_name for pak_name in pak_names
+                         if pak_name.lower() in [argument.lower() for argument in arguments.paks]]
+        if arguments.extract == [] and arguments.repack == []:
+            parser.print_help()
+        for format_ in arguments.extract:
+            if format_ == "strgs":
+                self.extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.additional_languages)
+        for format_ in arguments.repack:
+            if format_ == "strgs":
+                strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
+                if arguments.paks is not None:
+                    strg_pak_names = [pak_name for pak_name in strg_pak_names if
+                                      pak_name.lower().split(".")[0] in [argument.lower() for argument in arguments.paks]]
+                self.repack_strgs(strg_pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.language_overwrite)
 
 
-def repack_strgs(strg_pak_names, paks_folder, strgs_folder, language_overwrite):
-    for path in strg_pak_names:
-        [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
-         Strg.open_csv(f"{strgs_folder}/{path}", language_overwrite)]
+    @staticmethod
+    def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
+        strg_names = {pak_name: [file_name for file_name in listdir(f"{paks_folder}/{pak_name}")
+                      if file_name.endswith(".STRG")] for pak_name in pak_names}
+        strgs = {pak_name: [Strg().open_strg(f"{paks_folder}/{pak_name}/{strg_name}")
+                 for strg_name in strg_names[pak_name]] for pak_name in strg_names}
+        for pak_name in strgs:
+            Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
 
 
-def main():
-    parser = ArgumentParser()
-    parser.add_argument("-e", "--extract", choices=["strgs"], action="append", default=[])
-    parser.add_argument("-r", "--repack", choices=["strgs"], action="append", default=[])
-    parser.add_argument("-p", "--paks", nargs="*")
-    parser.add_argument("-pf", "--paks_folder", default="paks")
-    parser.add_argument("-sf", "--strgs_folder", default="strgs")
-    parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
-    parser.add_argument("-lo", "--language_overwrite", default="")
-    arguments = parser.parse_args()
-    pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
-    if arguments.paks is not None:
-        pak_names = [pak_name for pak_name in pak_names
-                     if pak_name.lower() in [argument.lower() for argument in arguments.paks]]
-    if arguments.extract == [] and arguments.repack == []:
-        parser.print_help()
-    for format_ in arguments.extract:
-        if format_ == "strgs":
-            extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.additional_languages)
-    for format_ in arguments.repack:
-        if format_ == "strgs":
-            strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
-            if arguments.paks is not None:
-                strg_pak_names = [pak_name for pak_name in strg_pak_names if
-                                  pak_name.lower().split(".")[0] in [argument.lower() for argument in arguments.paks]]
-            repack_strgs(strg_pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.language_overwrite)
+    @staticmethod
+    def repack_strgs(strg_pak_names, paks_folder, strgs_folder, language_overwrite):
+        for path in strg_pak_names:
+            [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
+             Strg.open_csv(f"{strgs_folder}/{path}", language_overwrite)]
 
 
 if __name__ == "__main__":
-    main()
+    Main()
