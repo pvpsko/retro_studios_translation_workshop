@@ -1,19 +1,23 @@
-from os import listdir
+from os import listdir, makedirs
+from os.path import exists
 from argparse import ArgumentParser
+from math import ceil
+
 import struct
 import csv
-from math import ceil
+import yaml
 from pygame import Surface, image
 
 
 class Main:
     def __init__(self):
         parser = ArgumentParser()
-        parser.add_argument("-e", "--extract", choices=["strgs"], action="append", default=[])
+        parser.add_argument("-e", "--extract", choices=["strgs", "fonts"], action="append", default=[])
         parser.add_argument("-r", "--repack", choices=["strgs"], action="append", default=[])
         parser.add_argument("-p", "--paks", nargs="*")
         parser.add_argument("-pf", "--paks_folder", default="paks")
         parser.add_argument("-sf", "--strgs_folder", default="strgs")
+        parser.add_argument("-ff", "--fonts_folder", default="fonts")
         parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
         parser.add_argument("-ol", "--overwrite_languages", default="")
         arguments = parser.parse_args()
@@ -25,11 +29,13 @@ class Main:
             parser.print_help()
         for format_ in arguments.extract:
             if format_ == "strgs":
-                self.extract_strgs(pak_names, arguments.paks_folder,
-                                   arguments.strgs_folder, arguments.additional_languages)
+                self.extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder,
+                                   arguments.additional_languages)
+            elif format_ == "fonts":
+                self.extract_fonts(pak_names, arguments.paks_folder, arguments.fonts_folder)
         for format_ in arguments.repack:
             if format_ == "strgs":
-                strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
+                strg_pak_names = [pak_name for pak_name in listdir(arguments.strgs_folder)]
                 if arguments.paks is not None:
                     strg_pak_names = [pak_name for pak_name in strg_pak_names if pak_name.lower().split(".")[0] in
                                       [argument.lower() for argument in arguments.paks]]
@@ -42,6 +48,8 @@ class Main:
                       if file_name.endswith(".STRG")] for pak_name in pak_names}
         strgs = {pak_name: [Strg().open_strg(f"{paks_folder}/{pak_name}/{strg_name}")
                  for strg_name in strg_names[pak_name]] for pak_name in strg_names}
+        if not exists(strgs_folder):
+            makedirs(strgs_folder)
         for pak_name in strgs:
             Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
 
@@ -49,7 +57,23 @@ class Main:
     def repack_strgs(strg_pak_names, paks_folder, strgs_folder, overwrite_languages):
         for path in strg_pak_names:
             [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
-             Strg.open_csv(f"{strgs_folder}/{path}", overwrite_languages)]
+             Strg.from_csv(f"{strgs_folder}/{path}", overwrite_languages)]
+
+    @staticmethod
+    def extract_fonts(pak_names, paks_folder, fonts_folder):
+        font_paths = [(pak, file) for pak in pak_names for file in listdir(f"{paks_folder}/{pak}")
+                      if file.endswith(".FONT")]
+        fonts = {}
+        for path in font_paths:
+            font_id = path[1]
+            if font_id not in fonts:
+                fonts[font_id] = Font().from_font(f"{paks_folder}/{path[0]}/{path[1]}")
+            fonts[font_id].usings.append(path[0])
+        for font in fonts.values():
+            path = f"{fonts_folder}/{font.font_name} {font.font_size} {font.id}"
+            if not exists(path):
+                makedirs(path)
+            font.save_as_yaml_png(path)
 
 
 class FileReader:
@@ -80,7 +104,7 @@ class FileReader:
     def read_ansi(self):
         end_offset = self.bytes.find(b"\x00", self.offset)
         string = self.bytes[self.offset: end_offset].decode("ANSI")
-        self.offset = end_offset
+        self.offset = end_offset + 1
         return string
 
     def read_nibbles(self, count):
@@ -89,7 +113,7 @@ class FileReader:
         nibbles = []
         for byte, in self.iter_read(">B", count // 2):
             nibbles.append(byte >> 4)
-            nibbles.append(byte & 16)
+            nibbles.append(byte & 15)
         return nibbles
 
 
@@ -149,7 +173,7 @@ class Strg:
             file.write(buffer + b"\xFF" * (32 - len(buffer) % 32))
     
     @staticmethod
-    def open_csv(path, overwrite_languages):
+    def from_csv(path, overwrite_languages):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
         overwrite_languages = {languages.split(">")[0]: languages.split(">")[1]
@@ -212,10 +236,13 @@ class Strg:
 class Font:
     MAGIC = 0x464F4E54
 
+    def __init__(self):
+        self.usings = []
+
     def from_font(self, path):
         self.pak_path = "/".join(path.split("/")[: -1])
         self.file_name = path.split("/")[-1]
-        self.id = self.file_name.split('.')[0].upper()
+        self.id = ".".join(self.file_name.split('.')[:-1]).upper()
         with open(path, "rb") as file:
             reader = FileReader(file.read())
         magic, self.version = reader.read(">LL")
@@ -225,16 +252,40 @@ class Font:
             self.width, self.height, self.vertical_offset, self.line_margin, \
                 self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
             self.font_name = reader.read_ansi()
-            self.save_path = f"fonts/{self.font_name} {self.font_size} {self.id}"
             self.texture_id, self.texture_mode, glyph_count = reader.read(">3L")
-            self.texture_id = hex(self.texture_id)[2:]
             self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2]
-                            for i in reader.iter_read(">2Hl", reader.read(">L"))}
+                            for i in reader.iter_read(">2Hl", reader.read(">L")[0])}
             self.texture = FontTxtr()
-            self.texture.from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR")
+            self.texture.from_txtr(f"{self.pak_path}/{hex(self.texture_id)[2:]}.TXTR")
         else:
             raise Exception("Unsupported version")
+        return self
+
+    def save_as_yaml_png(self, folder):
+        with open(f"{folder}/Font.yaml", "wt", encoding="UTF-8") as file:
+            yaml.dump(self.get_data(), file, sort_keys=False, allow_unicode=True)
+            self.texture.save_as_pngs(folder)
+
+    def get_data(self):
+        return {"ID":              self.id,
+                "Version":         self.version,
+                "Usings":          self.usings,
+                "Width":           self.width,
+                "Height":          self.height,
+                "Vertical offset": self.vertical_offset,
+                "Line margin":     self.line_margin,
+                "?":               self.tmp1,
+                "??":              self.tmp2,
+                "???":             self.tmp3,
+                "Font size":       self.font_size,
+                "Font name":       self.font_name,
+                "Texture id":      hex(self.texture_id)[2:],
+                "Texture mode":    self.texture_mode,
+                "Texture":         {"Width": self.texture.size[0],
+                                    "Height": self.texture.size[1]},
+                "Glyphs":          {glyph.character: glyph.get_data() for glyph in self.glyphs},
+                "Kernings":        self.kerning}
 
     @staticmethod
     def decode_character(character):
@@ -258,15 +309,11 @@ class FontGlyph:
         self.top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
         self.bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
 
-    @staticmethod
-    def translate_uv_to_xy(uv, texture_size):
-        return [texture_size[0] * uv[0], texture_size[1] * uv[1]]
-
     def get_data(self):
-        return {"Left":                self.top_left_xy[0],
-                "Right":               self.bottom_right_xy[0],
-                "Top":                 self.top_left_xy[1],
-                "Bottom":              self.bottom_right_xy[1],
+        return {"Left":                self.top_left_uv[0],
+                "Right":               self.bottom_right_uv[0],
+                "Top":                 self.top_left_uv[1],
+                "Bottom":              self.bottom_right_uv[1],
                 "Layer index":         self.layer_index,
                 "Left padding":        self.padding[0],
                 "Right padding":       self.padding[1],
@@ -275,6 +322,10 @@ class FontGlyph:
                 "Height":              self.size[1],
                 "Vertical offset":     self.vertical_offset,
                 "Kerning start index": self.kerning_start_index}
+
+    @staticmethod
+    def translate_uv_to_xy(uv, texture_size):
+        return [texture_size[0] * uv[0], texture_size[1] * uv[1]]
 
 
 class FontTxtr:
@@ -290,12 +341,16 @@ class FontTxtr:
         self.palette_colors = [int(i[0]) for i in reader.iter_read(">H", self.palette_width * self.palette_height)]
         block_size = [8, 8]
         blocks_in_row_count = ceil(self.size[0] / block_size[0])
-        self.images = [Surface(self.size, 0, 8)] * 4
+        self.images = [Surface(self.size, 0, 8) for i in range(4)]
         pixels_count = blocks_in_row_count * ceil(self.size[1] / block_size[1]) * block_size[0] * block_size[1]
         for pixel_index, pixel in enumerate(reader.read_nibbles(pixels_count)):
             for i, image in enumerate(self.images):
                 if (pixel >> i) & 1:
                     image.set_at(self.translate_coords(pixel_index, block_size, blocks_in_row_count), "White")
+
+    def save_as_pngs(self, path):
+        for i, layer in enumerate(self.images):
+            image.save(layer, f"{path}/Layer {i}.png")
 
     @staticmethod
     def translate_coords(byte_offset, block_size, blocks_in_row_count):
@@ -304,11 +359,7 @@ class FontTxtr:
         block_coords = [block_index % blocks_in_row_count, block_index // blocks_in_row_count]
         pixel_in_block_coords = [pixel_in_block_index % 8, pixel_in_block_index // 8]
         return [block_coords[0] * block_size[0] + pixel_in_block_coords[0],
-                block_index[1] * block_size[1] + pixel_in_block_index[1]]
-
-    def save_as_pngs(self, path):
-        for i, layer in enumerate(self.images):
-            image.save(layer, f"{path}/Layer {i}.png")
+                block_coords[1] * block_size[1] + pixel_in_block_coords[1]]
 
 
 if __name__ == "__main__":
