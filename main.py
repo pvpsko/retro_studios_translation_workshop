@@ -111,6 +111,7 @@ class Strg:
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
         strgs = []
+        languages = None
         for row_index, row in enumerate(raw_data[: -2]):
             if Strg._is_row_empty(raw_data[row_index - 1]):
                 languages = Strg._rip_empty_languages(row[1:])
@@ -295,11 +296,10 @@ def main():
     parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
     parser.add_argument("-lo", "--language_overwrite", default="")
     arguments = parser.parse_args()
+    pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
     if arguments.paks is not None:
-        pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)
+        pak_names = [pak_name for pak_name in pak_names
                      if pak_name.lower() in [argument.lower() for argument in arguments.paks]]
-    else:
-        pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
     if arguments.extract == [] and arguments.repack == []:
         parser.print_help()
     for format_ in arguments.extract:
@@ -307,11 +307,10 @@ def main():
             extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.additional_languages)
     for format_ in arguments.repack:
         if format_ == "strgs":
+            strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
             if arguments.paks is not None:
-                strg_pak_names = [pak_name for pak_name in listdir(arguments.strgs_folder) if
+                strg_pak_names = [pak_name for pak_name in strg_pak_names if
                                   pak_name.lower().split(".")[0] in [argument.lower() for argument in arguments.paks]]
-            else:
-                strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
             repack_strgs(strg_pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.language_overwrite)
 
 
