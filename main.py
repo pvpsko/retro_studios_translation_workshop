@@ -290,15 +290,16 @@ class Main:
             parser.print_help()
         for format_ in arguments.extract:
             if format_ == "strgs":
-                self.extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.additional_languages)
+                self.extract_strgs(pak_names, arguments.paks_folder,
+                                   arguments.strgs_folder, arguments.additional_languages)
         for format_ in arguments.repack:
             if format_ == "strgs":
                 strg_pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
                 if arguments.paks is not None:
-                    strg_pak_names = [pak_name for pak_name in strg_pak_names if
-                                      pak_name.lower().split(".")[0] in [argument.lower() for argument in arguments.paks]]
-                self.repack_strgs(strg_pak_names, arguments.paks_folder, arguments.strgs_folder, arguments.language_overwrite)
-
+                    strg_pak_names = [pak_name for pak_name in strg_pak_names if pak_name.lower().split(".")[0] in
+                                      [argument.lower() for argument in arguments.paks]]
+                self.repack_strgs(strg_pak_names, arguments.paks_folder,
+                                  arguments.strgs_folder, arguments.language_overwrite)
 
     @staticmethod
     def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
@@ -308,7 +309,6 @@ class Main:
                  for strg_name in strg_names[pak_name]] for pak_name in strg_names}
         for pak_name in strgs:
             Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
-
 
     @staticmethod
     def repack_strgs(strg_pak_names, paks_folder, strgs_folder, language_overwrite):
