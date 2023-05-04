@@ -166,9 +166,6 @@ class Strg:
 class Font:
     MAGIC = 0x464F4E54
 
-    def __init__(self):
-        ...
-
     def from_font(self, path):
         self.pak_path = "/".join(path.split("/")[: -1])
         self.file_name = path.split("/")[-1]
@@ -235,9 +232,6 @@ class FontGlyph:
 
 
 class FontTxtr:
-    def __init__(self):
-        ...
-
     def from_txtr(self, path):
         self.path = path
         with open(path, "rb") as file:
