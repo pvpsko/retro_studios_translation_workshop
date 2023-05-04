@@ -103,11 +103,11 @@ class Strg:
             file.write(buffer + b"\xFF" * (32 - len(buffer) % 32))
     
     @staticmethod
-    def open_csv(path, language_overwrite):
+    def open_csv(path, overwrite_languages):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
-        language_overwrite = {languages.split(">")[0]: languages.split(">")[1]
-                              for languages in language_overwrite.split() if languages != []}
+        overwrite_languages = {languages.split(">")[0]: languages.split(">")[1]
+                               for languages in overwrite_languages.split() if languages != []}
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
         strgs = []
@@ -116,13 +116,13 @@ class Strg:
             if Strg._is_row_empty(raw_data[row_index - 1]):
                 languages = Strg._rip_empty_languages(row[1:])
                 strgs.append(Strg(row[0], version))
-                strgs[-1].strings = {language: [] for language in languages if language not in language_overwrite}
+                strgs[-1].strings = {language: [] for language in languages if language not in overwrite_languages}
             elif not Strg._is_row_empty(row):
                 for column_index, cell in enumerate(row[1: len(languages) + 1]):
                     language = languages[column_index]
-                    if language in language_overwrite:
-                        strgs[-1].strings[language_overwrite[language]].append(cell)
-                    elif language not in language_overwrite.values():
+                    if language in overwrite_languages:
+                        strgs[-1].strings[overwrite_languages[language]].append(cell)
+                    elif language not in overwrite_languages.values():
                         strgs[-1].strings[language].append(cell)
         return strgs
 
@@ -274,7 +274,7 @@ class Main:
         parser.add_argument("-pf", "--paks_folder", default="paks")
         parser.add_argument("-sf", "--strgs_folder", default="strgs")
         parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
-        parser.add_argument("-lo", "--language_overwrite", default="")
+        parser.add_argument("-ol", "--overwrite_languages", default="")
         arguments = parser.parse_args()
         pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
         if arguments.paks is not None:
@@ -293,7 +293,7 @@ class Main:
                     strg_pak_names = [pak_name for pak_name in strg_pak_names if pak_name.lower().split(".")[0] in
                                       [argument.lower() for argument in arguments.paks]]
                 self.repack_strgs(strg_pak_names, arguments.paks_folder,
-                                  arguments.strgs_folder, arguments.language_overwrite)
+                                  arguments.strgs_folder, arguments.overwrite_languages)
 
     @staticmethod
     def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
@@ -305,10 +305,10 @@ class Main:
             Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
 
     @staticmethod
-    def repack_strgs(strg_pak_names, paks_folder, strgs_folder, language_overwrite):
+    def repack_strgs(strg_pak_names, paks_folder, strgs_folder, overwrite_languages):
         for path in strg_pak_names:
             [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
-             Strg.open_csv(f"{strgs_folder}/{path}", language_overwrite)]
+             Strg.open_csv(f"{strgs_folder}/{path}", overwrite_languages)]
 
 
 if __name__ == "__main__":
