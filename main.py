@@ -75,7 +75,7 @@ class Main:
             path = f"{fonts_folder}/{font.font_name} {font.font_size} {font.id}"
             if not exists(path):
                 makedirs(path)
-            font.save_as_yaml_png(path)
+            font.save_as_yaml_pngs(path)
 
     @staticmethod
     def repack_fonts(paks_folder, fonts_folder):
@@ -284,12 +284,18 @@ class Font:
             buffer += self.font_name.encode("ANSI") + b"\x00"
             buffer += struct.pack(">LLL", int(self.texture_id, 16), self.texture_mode, len(self.glyphs))
             for glyph in self.glyphs:
-                buffer += glyph.get_bytes()
+                buffer += glyph.get_bytes(self.kerning, self.version)
+            buffer += struct.pack(">L", len(self.kerning))
+            for character_pair in self.kerning:
+                buffer += self.encode_character(character_pair) + struct.pack(">l", self.kerning[character_pair])
         else:
             raise Exception("Unsupported version")
         self.texture.save_as_txtr([f"{paks_folder}/{using}/{self.texture_id}.TXTR" for using in self.usings])
+        for using in self.usings:
+            with open(f"{paks_folder}/{using}/{self.id}.FONT", "wb") as file:
+                file.write(buffer)
 
-    def save_as_yaml_png(self, folder):
+    def save_as_yaml_pngs(self, folder):
         with open(f"{folder}/Font.yaml", "wt", encoding="UTF-8") as file:
             yaml.dump(self.get_dict(), file, sort_keys=False, allow_unicode=True)
             self.texture.save_as_pngs(folder)
@@ -311,6 +317,7 @@ class Font:
         self.texture_mode = dict_["Texture mode"]
         self.glyphs = [FontGlyph().from_dict(character, glyph_dict, texture_size)
                        for character, glyph_dict in dict_["Glyphs"].items()]
+        self.kerning = {pair: dict_["Kerning"][pair] for pair in dict_["Kerning"] if dict_["Kerning"][pair] != 0}
 
     def get_dict(self):
         return {"ID":              self.id,
@@ -329,11 +336,15 @@ class Font:
                 "Texture mode":    self.texture_mode,
                 "Texture palette": self.texture.palette_colors,
                 "Glyphs":          {glyph.character: glyph.get_dict(self.texture.size) for glyph in self.glyphs},
-                "Kernings":        self.kerning}
+                "Kerning":        {pair: self.kerning[pair] for pair in self.kerning if self.kerning[pair] != 0}}
 
     @staticmethod
     def decode_character(character):
-        return character.to_bytes(2, "little").decode("UTF-16")
+        return character.to_bytes(2, "big").decode("UTF-16BE")
+
+    @staticmethod
+    def encode_character(character):
+        return character.encode("UTF-16BE")
 
 
 class FontGlyph:
@@ -350,8 +361,8 @@ class FontGlyph:
         return self
 
     def from_dict(self, character, dict_, texture_size):
-        top_left_uv = self.translate_uv_to_xy([dict_["Left"], dict_["Top"]], texture_size)
-        bottom_right_uv = self.translate_uv_to_xy([dict_["Bottom"], dict_["Right"]], texture_size)
+        top_left_uv = self.translate_xy_to_uv([dict_["Left"], dict_["Top"]], texture_size)
+        bottom_right_uv = self.translate_xy_to_uv([dict_["Right"], dict_["Bottom"]], texture_size)
         return self.from_data(character,
                               top_left_uv[0],
                               top_left_uv[1],
@@ -365,13 +376,15 @@ class FontGlyph:
                               dict_["Height"],
                               dict_["Vertical offset"])
 
-    def get_bytes(self):
-        return (
-                self.character.encode("UTF-16BE") +
-                struct.pack(">4f7B", self.top_left_uv[0], self.top_left_uv[1], self.bottom_right_uv[0],
-                            self.bottom_right_uv[1], self.layer_index, self.padding[0], self.print_head_advance,
-                            self.padding[1], self.size[0], self.size[1], self.vertical_offset)
-        )
+    def get_bytes(self, kerning, version):
+        buffer = self.character.encode("UTF-16BE")
+        buffer += struct.pack(">4f", self.top_left_uv[0], self.top_left_uv[1],
+                              self.bottom_right_uv[0], self.bottom_right_uv[1])
+        if version >= 4:
+            buffer += struct.pack(">B", self.layer_index)
+        buffer += struct.pack(">6BH", self.padding[0], self.print_head_advance, self.padding[1], self.size[0],
+                              self.size[1], self.vertical_offset, self.get_kerning_start_index(self.character, kerning))
+        return buffer
 
     def get_dict(self, texture_size):
         top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
@@ -395,6 +408,13 @@ class FontGlyph:
     @staticmethod
     def translate_xy_to_uv(xy, texture_size):
         return [xy[0] / texture_size[0], xy[1] / texture_size[1]]
+
+    @staticmethod
+    def get_kerning_start_index(character, kerning):
+        try:
+            return [kern[0] for kern in kerning].index(character)
+        except ValueError:
+            return len(kerning) + 1
 
 
 class FontTxtr:
