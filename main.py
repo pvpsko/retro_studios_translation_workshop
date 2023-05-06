@@ -13,11 +13,11 @@ class Main:
     def __init__(self):
         parser = ArgumentParser()
         parser.add_argument("-e", "--extract", choices=["strgs", "fonts"], action="append", default=[])
-        parser.add_argument("-r", "--repack", choices=["strgs"], action="append", default=[])
+        parser.add_argument("-r", "--repack", choices=["strgs", "fonts"], action="append", default=[])
         parser.add_argument("-p", "--paks", nargs="*")
         parser.add_argument("-pf", "--paks_folder", default="paks")
-        parser.add_argument("-sf", "--strgs_folder", default="strgs")
-        parser.add_argument("-ff", "--fonts_folder", default="fonts")
+        parser.add_argument("-sf", "--strgs_folder", default="extracted/strgs")
+        parser.add_argument("-ff", "--fonts_folder", default="extracted/fonts")
         parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
         parser.add_argument("-ol", "--overwrite_languages", default="")
         arguments = parser.parse_args()
@@ -41,6 +41,8 @@ class Main:
                                       [argument.lower() for argument in arguments.paks]]
                 self.repack_strgs(strg_pak_names, arguments.paks_folder,
                                   arguments.strgs_folder, arguments.overwrite_languages)
+            elif format_ == "fonts":
+                self.repack_fonts(arguments.paks_folder, arguments.fonts_folder)
 
     @staticmethod
     def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
@@ -67,13 +69,19 @@ class Main:
         for path in font_paths:
             font_id = path[1]
             if font_id not in fonts:
-                fonts[font_id] = Font().from_font(f"{paks_folder}/{path[0]}/{path[1]}")
+                fonts[font_id] = Font().from_font_txtr(f"{paks_folder}/{path[0]}/{path[1]}")
             fonts[font_id].usings.append(path[0])
         for font in fonts.values():
             path = f"{fonts_folder}/{font.font_name} {font.font_size} {font.id}"
             if not exists(path):
                 makedirs(path)
             font.save_as_yaml_png(path)
+
+    @staticmethod
+    def repack_fonts(paks_folder, fonts_folder):
+        fonts = [Font().from_yaml_pngs(f"{fonts_folder}/{path}") for path in listdir(fonts_folder)]
+        for font in fonts:
+            font.save_as_font_strg(paks_folder)
 
 
 class FileReader:
@@ -239,7 +247,7 @@ class Font:
     def __init__(self):
         self.usings = []
 
-    def from_font(self, path):
+    def from_font_txtr(self, path):
         self.pak_path = "/".join(path.split("/")[: -1])
         self.file_name = path.split("/")[-1]
         self.id = ".".join(self.file_name.split('.')[:-1]).upper()
@@ -249,25 +257,62 @@ class Font:
         if magic != self.MAGIC:
             raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and required to be {self.MAGIC}.")
         if self.version == 4:
-            self.width, self.height, self.vertical_offset, self.line_margin, \
-                self.tmp1, self.tmp2, self.tmp3, self.font_size = reader.read(">4L2?2L")
+            (self.width, self.height, self.vertical_offset, self.line_margin,
+                self.tmp1, self.tmp2, self.tmp3, self.font_size) = reader.read(">4L2?2L")
             self.font_name = reader.read_ansi()
-            self.texture_id, self.texture_mode, glyph_count = reader.read(">3L")
-            self.glyphs = [FontGlyph(*i) for i in reader.iter_read(">H4f7BH", glyph_count)]
+            texture_id, self.texture_mode, glyph_count = reader.read(">3L")
+            self.texture_id = hex(texture_id)[2:]
+            self.glyphs = [FontGlyph().from_data(*i[:-1]) for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2]
                             for i in reader.iter_read(">2Hl", reader.read(">L")[0])}
-            self.texture = FontTxtr()
-            self.texture.from_txtr(f"{self.pak_path}/{hex(self.texture_id)[2:]}.TXTR")
+            self.texture = FontTxtr().from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR")
         else:
             raise Exception("Unsupported version")
         return self
 
+    def from_yaml_pngs(self, folder):
+        with open(f"{folder}/Font.yaml", "rt", encoding="UTF-8") as file:
+            dict_ = yaml.safe_load(file)
+            self.from_dict(dict_)
+        self.texture = FontTxtr().from_pngs(folder, dict_["Texture palette"])
+        return self
+
+    def save_as_font_strg(self, paks_folder):
+        if self.version == 4:
+            buffer = struct.pack(">LL4L2?2L", self.MAGIC, self.version, self.width, self.height, self.vertical_offset,
+                                 self.line_margin, self.tmp1, self.tmp2, self.tmp3, self.font_size)
+            buffer += self.font_name.encode("ANSI") + b"\x00"
+            buffer += struct.pack(">LLL", int(self.texture_id, 16), self.texture_mode, len(self.glyphs))
+            for glyph in self.glyphs:
+                buffer += glyph.get_bytes()
+        else:
+            raise Exception("Unsupported version")
+        self.texture.save_as_txtr([f"{paks_folder}/{using}/{self.texture_id}.TXTR" for using in self.usings])
+
     def save_as_yaml_png(self, folder):
         with open(f"{folder}/Font.yaml", "wt", encoding="UTF-8") as file:
-            yaml.dump(self.get_data(), file, sort_keys=False, allow_unicode=True)
+            yaml.dump(self.get_dict(), file, sort_keys=False, allow_unicode=True)
             self.texture.save_as_pngs(folder)
 
-    def get_data(self):
+    def from_dict(self, dict_):
+        self.id = dict_["ID"]
+        self.version = dict_["Version"]
+        self.usings = dict_["Usings"]
+        self.width = dict_["Width"]
+        self.height = dict_["Height"]
+        self.vertical_offset = dict_["Vertical offset"]
+        self.line_margin = dict_["Line margin"]
+        self.tmp1 = dict_["?"]
+        self.tmp2 = dict_["??"]
+        self.tmp3 = dict_["???"]
+        self.font_size = dict_["Font size"]
+        self.font_name = dict_["Font name"]
+        self.texture_id = dict_["Texture id"]
+        self.texture_mode = dict_["Texture mode"]
+        self.glyphs = [FontGlyph().from_dict(character, glyph_dict)
+                       for character, glyph_dict in dict_["Glyphs"].items()]
+
+    def get_dict(self):
         return {"ID":              self.id,
                 "Version":         self.version,
                 "Usings":          self.usings,
@@ -280,11 +325,10 @@ class Font:
                 "???":             self.tmp3,
                 "Font size":       self.font_size,
                 "Font name":       self.font_name,
-                "Texture id":      hex(self.texture_id)[2:],
+                "Texture id":      self.texture_id,
                 "Texture mode":    self.texture_mode,
-                "Texture":         {"Width": self.texture.size[0],
-                                    "Height": self.texture.size[1]},
-                "Glyphs":          {glyph.character: glyph.get_data() for glyph in self.glyphs},
+                "Texture palette": self.texture.palette_colors,
+                "Glyphs":          {glyph.character: glyph.get_dict() for glyph in self.glyphs},
                 "Kernings":        self.kerning}
 
     @staticmethod
@@ -293,9 +337,9 @@ class Font:
 
 
 class FontGlyph:
-    def __init__(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance,
-                 right_padding, width, height, vertical_offset, kerning_start_index):
-        self.character = Font.decode_character(character)
+    def from_data(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance,
+                  right_padding, width, height, vertical_offset):
+        self.character = Font.decode_character(character) if type(character) == int else character
         self.top_left_uv = [left, top]
         self.bottom_right_uv = [right, bottom]
         self.layer_index = layer_index
@@ -303,25 +347,46 @@ class FontGlyph:
         self.print_head_advance = print_head_advance
         self.size = [width, height]
         self.vertical_offset = vertical_offset
-        self.kerning_start_index = kerning_start_index
+        return self
+
+    def from_dict(self, character, dict_):
+        return self.from_data(character,
+                              dict_["Left"],
+                              dict_["Top"],
+                              dict_["Right"],
+                              dict_["Bottom"],
+                              dict_["Layer"],
+                              dict_["Left padding"],
+                              dict_["Print head advance"],
+                              dict_["Right padding"],
+                              dict_["Width"],
+                              dict_["Height"],
+                              dict_["Vertical offset"])
 
     def to_xy(self, texture_size):
         self.top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
         self.bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
 
-    def get_data(self):
+    def get_bytes(self):
+        return (
+                self.character.encode("UTF-16BE") +
+                struct.pack(">4f7B", self.top_left_uv[0], self.top_left_uv[1], self.bottom_right_uv[0],
+                            self.bottom_right_uv[1], self.layer_index, self.padding[0], self.print_head_advance,
+                            self.padding[1], self.size[0], self.size[1], self.vertical_offset)
+        )
+
+    def get_dict(self):
         return {"Left":                self.top_left_uv[0],
                 "Right":               self.bottom_right_uv[0],
                 "Top":                 self.top_left_uv[1],
                 "Bottom":              self.bottom_right_uv[1],
-                "Layer index":         self.layer_index,
+                "Layer":               self.layer_index,
                 "Left padding":        self.padding[0],
                 "Right padding":       self.padding[1],
                 "Print head advance":  self.print_head_advance,
                 "Width":               self.size[0],
                 "Height":              self.size[1],
-                "Vertical offset":     self.vertical_offset,
-                "Kerning start index": self.kerning_start_index}
+                "Vertical offset":     self.vertical_offset}
 
     @staticmethod
     def translate_uv_to_xy(uv, texture_size):
@@ -329,37 +394,67 @@ class FontGlyph:
 
 
 class FontTxtr:
+    BLOCK_SIZE = [8, 8]
+
     def from_txtr(self, path):
-        self.path = path
         with open(path, "rb") as file:
             reader = FileReader(file.read())
-        self.image_format, width, height, self.mipmap_count, self.palette_format = reader.read(">L2H2L")
+        self.image_format, width, height, mipmap_count, palette_format = reader.read(">L2H2L")
         self.size = [width, height]
         if self.image_format != 4:
             raise Exception(f"Wrong/unsupported texture format in file {path}")
-        self.palette_width, self.palette_height = reader.read(">2H")
-        self.palette_colors = [int(i[0]) for i in reader.iter_read(">H", self.palette_width * self.palette_height)]
-        block_size = [8, 8]
-        blocks_in_row_count = ceil(self.size[0] / block_size[0])
-        self.images = [Surface(self.size, 0, 8) for i in range(4)]
-        pixels_count = blocks_in_row_count * ceil(self.size[1] / block_size[1]) * block_size[0] * block_size[1]
+        palette_width, palette_height = reader.read(">2H")
+        self.palette_colors = [int(i[0]) for i in reader.iter_read(">H", palette_width * palette_height)]
+        blocks_in_row_count = ceil(self.size[0] / self.BLOCK_SIZE[0])
+        self.images = [Surface(self.size, 0, 8) for _ in range(4)]
+        pixels_count = (blocks_in_row_count * ceil(self.size[1] / self.BLOCK_SIZE[1]) *
+                        self.BLOCK_SIZE[0] * self.BLOCK_SIZE[1])
         for pixel_index, pixel in enumerate(reader.read_nibbles(pixels_count)):
             for i, image in enumerate(self.images):
                 if (pixel >> i) & 1:
-                    image.set_at(self.translate_coords(pixel_index, block_size, blocks_in_row_count), "White")
+                    image.set_at(self.translate_coords(pixel_index, blocks_in_row_count), "White")
+        return self
+
+    def from_pngs(self, folder, palette):
+        self.images = [image.load(f"{folder}/Layer {i}.png") for i in range(4)]
+        self.size = self.images[0].get_size()
+        self.palette_colors = palette
+        return self
+
+    def save_as_txtr(self, paths):
+        buffer = struct.pack(">L2H2L2H", 4, self.size[0], self.size[1], 1, 2, 1, 16)
+        for color in self.palette_colors:
+            buffer += struct.pack(">H", color)
+        blocks_in_row_count = ceil(self.size[0] / self.BLOCK_SIZE[0])
+        pixels_count = (blocks_in_row_count * ceil(self.size[1] / self.BLOCK_SIZE[1]) *
+                        self.BLOCK_SIZE[0] * self.BLOCK_SIZE[1])
+        pixels = []
+        for pixel_index in range(pixels_count):
+            bits = []
+            for image_index, image in enumerate(self.images):
+                bits.append(image.get_at(self.translate_coords(pixel_index, blocks_in_row_count)).r > 127)
+            pixels.append(self.bits_to_int(bits))
+        for i in range(0, len(pixels), 2):
+            buffer += ((pixels[i] << 4) + pixels[i + 1]).to_bytes(1, "big")
+        for path in paths:
+            with open(path, "wb") as file:
+                file.write(buffer)
 
     def save_as_pngs(self, path):
         for i, layer in enumerate(self.images):
             image.save(layer, f"{path}/Layer {i}.png")
 
-    @staticmethod
-    def translate_coords(byte_offset, block_size, blocks_in_row_count):
+    def translate_coords(self, byte_offset, blocks_in_row_count):
         block_index = byte_offset // 64
         pixel_in_block_index = byte_offset % 64
         block_coords = [block_index % blocks_in_row_count, block_index // blocks_in_row_count]
         pixel_in_block_coords = [pixel_in_block_index % 8, pixel_in_block_index // 8]
-        return [block_coords[0] * block_size[0] + pixel_in_block_coords[0],
-                block_coords[1] * block_size[1] + pixel_in_block_coords[1]]
+        return [block_coords[0] * self.BLOCK_SIZE[0] + pixel_in_block_coords[0],
+                block_coords[1] * self.BLOCK_SIZE[1] + pixel_in_block_coords[1]]
+
+    @staticmethod
+    def bits_to_int(bits):
+        return sum(map(lambda x: x[1] << x[0], enumerate(bits)))
 
 
 if __name__ == "__main__":
