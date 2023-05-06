@@ -273,8 +273,8 @@ class Font:
     def from_yaml_pngs(self, folder):
         with open(f"{folder}/Font.yaml", "rt", encoding="UTF-8") as file:
             dict_ = yaml.safe_load(file)
-            self.from_dict(dict_)
-        self.texture = FontTxtr().from_pngs(folder, dict_["Texture palette"])
+            self.texture = FontTxtr().from_pngs(folder, dict_["Texture palette"])
+            self.from_dict(dict_, self.texture.size)
         return self
 
     def save_as_font_strg(self, paks_folder):
@@ -294,7 +294,7 @@ class Font:
             yaml.dump(self.get_dict(), file, sort_keys=False, allow_unicode=True)
             self.texture.save_as_pngs(folder)
 
-    def from_dict(self, dict_):
+    def from_dict(self, dict_, texture_size):
         self.id = dict_["ID"]
         self.version = dict_["Version"]
         self.usings = dict_["Usings"]
@@ -309,7 +309,7 @@ class Font:
         self.font_name = dict_["Font name"]
         self.texture_id = dict_["Texture id"]
         self.texture_mode = dict_["Texture mode"]
-        self.glyphs = [FontGlyph().from_dict(character, glyph_dict)
+        self.glyphs = [FontGlyph().from_dict(character, glyph_dict, texture_size)
                        for character, glyph_dict in dict_["Glyphs"].items()]
 
     def get_dict(self):
@@ -328,7 +328,7 @@ class Font:
                 "Texture id":      self.texture_id,
                 "Texture mode":    self.texture_mode,
                 "Texture palette": self.texture.palette_colors,
-                "Glyphs":          {glyph.character: glyph.get_dict() for glyph in self.glyphs},
+                "Glyphs":          {glyph.character: glyph.get_dict(self.texture.size) for glyph in self.glyphs},
                 "Kernings":        self.kerning}
 
     @staticmethod
@@ -349,12 +349,14 @@ class FontGlyph:
         self.vertical_offset = vertical_offset
         return self
 
-    def from_dict(self, character, dict_):
+    def from_dict(self, character, dict_, texture_size):
+        top_left_uv = self.translate_uv_to_xy([dict_["Left"], dict_["Top"]], texture_size)
+        bottom_right_uv = self.translate_uv_to_xy([dict_["Bottom"], dict_["Right"]], texture_size)
         return self.from_data(character,
-                              dict_["Left"],
-                              dict_["Top"],
-                              dict_["Right"],
-                              dict_["Bottom"],
+                              top_left_uv[0],
+                              top_left_uv[1],
+                              bottom_right_uv[0],
+                              bottom_right_uv[1],
                               dict_["Layer"],
                               dict_["Left padding"],
                               dict_["Print head advance"],
@@ -362,10 +364,6 @@ class FontGlyph:
                               dict_["Width"],
                               dict_["Height"],
                               dict_["Vertical offset"])
-
-    def to_xy(self, texture_size):
-        self.top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
-        self.bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
 
     def get_bytes(self):
         return (
@@ -375,22 +373,28 @@ class FontGlyph:
                             self.padding[1], self.size[0], self.size[1], self.vertical_offset)
         )
 
-    def get_dict(self):
-        return {"Left":                self.top_left_uv[0],
-                "Right":               self.bottom_right_uv[0],
-                "Top":                 self.top_left_uv[1],
-                "Bottom":              self.bottom_right_uv[1],
-                "Layer":               self.layer_index,
-                "Left padding":        self.padding[0],
-                "Right padding":       self.padding[1],
-                "Print head advance":  self.print_head_advance,
-                "Width":               self.size[0],
-                "Height":              self.size[1],
-                "Vertical offset":     self.vertical_offset}
+    def get_dict(self, texture_size):
+        top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
+        bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
+        return {"Left":               top_left_xy[0],
+                "Right":              bottom_right_xy[0],
+                "Top":                top_left_xy[1],
+                "Bottom":             bottom_right_xy[1],
+                "Layer":              self.layer_index,
+                "Left padding":       self.padding[0],
+                "Right padding":      self.padding[1],
+                "Print head advance": self.print_head_advance,
+                "Width":              self.size[0],
+                "Height":             self.size[1],
+                "Vertical offset":    self.vertical_offset}
 
     @staticmethod
     def translate_uv_to_xy(uv, texture_size):
-        return [texture_size[0] * uv[0], texture_size[1] * uv[1]]
+        return [uv[0] * texture_size[0], uv[1] * texture_size[1]]
+
+    @staticmethod
+    def translate_xy_to_uv(xy, texture_size):
+        return [xy[0] / texture_size[0], xy[1] / texture_size[1]]
 
 
 class FontTxtr:
