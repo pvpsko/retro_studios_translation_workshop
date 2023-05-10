@@ -14,74 +14,51 @@ class Main:
         parser = ArgumentParser()
         parser.add_argument("-e", "--extract", choices=["strgs", "fonts"], action="append", default=[])
         parser.add_argument("-r", "--repack", choices=["strgs", "fonts"], action="append", default=[])
-        parser.add_argument("-p", "--paks", nargs="*")
-        parser.add_argument("-pf", "--paks_folder", default="paks")
-        parser.add_argument("-sf", "--strgs_folder", default="extracted/strgs")
+        parser.add_argument("-rf", "--resource_folder", default="resources")
+        parser.add_argument("-sp", "--strgs_path", default="extracted/strgs.csv")
         parser.add_argument("-ff", "--fonts_folder", default="extracted/fonts")
         parser.add_argument("-al", "--additional_languages", nargs="+", default=[])
-        parser.add_argument("-ol", "--overwrite_languages", default="")
+        parser.add_argument("-ol", "--overwrite_languages", nargs="+", default=[])
         arguments = parser.parse_args()
-        pak_names = [pak_name for pak_name in listdir(arguments.paks_folder)]
-        if arguments.paks is not None:
-            pak_names = [pak_name for pak_name in pak_names
-                         if pak_name.lower() in [argument.lower() for argument in arguments.paks]]
         if arguments.extract == [] and arguments.repack == []:
             parser.print_help()
         for format_ in arguments.extract:
             if format_ == "strgs":
-                self.extract_strgs(pak_names, arguments.paks_folder, arguments.strgs_folder,
-                                   arguments.additional_languages)
+                self.extract_strgs(arguments.resource_folder, arguments.strgs_path, arguments.additional_languages)
             elif format_ == "fonts":
-                self.extract_fonts(pak_names, arguments.paks_folder, arguments.fonts_folder)
+                self.extract_fonts(arguments.resource_folder, arguments.fonts_folder)
         for format_ in arguments.repack:
             if format_ == "strgs":
-                strg_pak_names = [pak_name for pak_name in listdir(arguments.strgs_folder)]
-                if arguments.paks is not None:
-                    strg_pak_names = [pak_name for pak_name in strg_pak_names if pak_name.lower().split(".")[0] in
-                                      [argument.lower() for argument in arguments.paks]]
-                self.repack_strgs(strg_pak_names, arguments.paks_folder,
-                                  arguments.strgs_folder, arguments.overwrite_languages)
+                self.repack_strgs(arguments.resource_folder, arguments.strgs_path, arguments.overwrite_languages)
             elif format_ == "fonts":
-                self.repack_fonts(arguments.paks_folder, arguments.fonts_folder)
+                self.repack_fonts(arguments.resource_folder, arguments.fonts_folder)
 
     @staticmethod
-    def extract_strgs(pak_names, paks_folder, strgs_folder, additional_languages):
-        strg_names = {pak_name: [file_name for file_name in listdir(f"{paks_folder}/{pak_name}")
-                      if file_name.endswith(".STRG")] for pak_name in pak_names}
-        strgs = {pak_name: [Strg().open_strg(f"{paks_folder}/{pak_name}/{strg_name}")
-                 for strg_name in strg_names[pak_name]] for pak_name in strg_names}
-        if not exists(strgs_folder):
-            makedirs(strgs_folder)
-        for pak_name in strgs:
-            Strg.save_as_csv(f"{strgs_folder}/{pak_name}.csv", strgs[pak_name], additional_languages)
+    def extract_strgs(resource_folder, strgs_path, additional_languages):
+        strgs = [Strg().open_strg(f"{resource_folder}/{file_name}") for file_name in listdir(resource_folder)
+                 if file_name.endswith(".STRG")]
+        Strg.save_as_csv(strgs_path, strgs, additional_languages)
 
     @staticmethod
-    def repack_strgs(strg_pak_names, paks_folder, strgs_folder, overwrite_languages):
-        for path in strg_pak_names:
-            [strg.save_as_strg(f"{paks_folder}/{'.'.join(path.split('.')[:-1])}/{strg.id}.STRG") for strg in
-             Strg.from_csv(f"{strgs_folder}/{path}", overwrite_languages)]
+    def repack_strgs(resources_folder, strgs_path, overwrite_languages):
+        for strg in Strg.from_csv(strgs_path, overwrite_languages):
+            strg.save_as_strg(f"{resources_folder}/{strg.id}.STRG")
 
     @staticmethod
-    def extract_fonts(pak_names, paks_folder, fonts_folder):
-        font_paths = [(pak, file) for pak in pak_names for file in listdir(f"{paks_folder}/{pak}")
-                      if file.endswith(".FONT")]
-        fonts = {}
+    def extract_fonts(resource_folder, fonts_folder):
+        font_paths = [file for file in listdir(resource_folder) if file.endswith(".FONT")]
         for path in font_paths:
-            font_id = path[1]
-            if font_id not in fonts:
-                fonts[font_id] = Font().from_font_txtr(f"{paks_folder}/{path[0]}/{path[1]}")
-            fonts[font_id].usings.append(path[0])
-        for font in fonts.values():
+            font = Font().from_font_txtr(f"{resource_folder}/{path}")
             path = f"{fonts_folder}/{font.font_name} {font.font_size} {font.id}"
             if not exists(path):
                 makedirs(path)
             font.save_as_yaml_pngs(path)
 
     @staticmethod
-    def repack_fonts(paks_folder, fonts_folder):
+    def repack_fonts(resource_folder, fonts_folder):
         fonts = [Font().from_yaml_pngs(f"{fonts_folder}/{path}") for path in listdir(fonts_folder)]
         for font in fonts:
-            font.save_as_font_strg(paks_folder)
+            font.save_as_font_strg(resource_folder)
 
 
 class FileReader:
@@ -137,12 +114,12 @@ class Strg:
         self.id = path.split("/")[-1].split(".")[0]
         with open(path, "rb") as file:
             reader = FileReader(file.read())
-        magic, self.version = reader.read(">LL")
+        magic, self.version = reader.read(">2L")
         if magic != self.MAGIC:
             raise Exception(f"Wrong MAGIC in file {path}. File MAGIC is {magic} and required to be {self.MAGIC}.")
         if self.version > 0:
             raise Exception(f"Unsupported VERSION in file {path}")
-        language_count, string_count = reader.read(">LL")
+        language_count, string_count = reader.read(">2L")
         language_table = {}
         for language_id, language_offset in reader.iter_read(">4sL", language_count):
             language_table[language_id] = language_offset
@@ -160,7 +137,7 @@ class Strg:
     def save_as_strg(self, path):
         if self.version > 0:
             raise Exception(f"Unsupported VERSION")
-        header = struct.pack(">LLLL", self.MAGIC, self.version, len(self.strings), self.strings_count)
+        header = struct.pack(">4L", self.MAGIC, self.version, len(self.strings), self.strings_count)
         language_table = b""
         string_table = b""
         language_offset = 0
@@ -184,8 +161,8 @@ class Strg:
     def from_csv(path, overwrite_languages):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
-        overwrite_languages = {languages.split(">")[0]: languages.split(">")[1]
-                               for languages in overwrite_languages.split() if languages != []}
+        overwrite_languages = {languages.split("2")[0]: languages.split("2")[1]
+                               for languages in overwrite_languages if languages != []}
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
         strgs = []
@@ -244,11 +221,8 @@ class Strg:
 class Font:
     MAGIC = 0x464F4E54
 
-    def __init__(self):
-        self.usings = []
-
     def from_font_txtr(self, path):
-        self.pak_path = "/".join(path.split("/")[: -1])
+        resource_folder = "/".join(path.split("/")[: -1])
         self.file_name = path.split("/")[-1]
         self.id = ".".join(self.file_name.split('.')[:-1]).upper()
         with open(path, "rb") as file:
@@ -265,7 +239,7 @@ class Font:
             self.glyphs = [FontGlyph().from_data(*i[:-1]) for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2]
                             for i in reader.iter_read(">2Hl", reader.read(">L")[0])}
-            self.texture = FontTxtr().from_txtr(f"{self.pak_path}/{self.texture_id}.TXTR")
+            self.texture = FontTxtr().from_txtr(f"{resource_folder}/{self.texture_id}.TXTR")
         else:
             raise Exception("Unsupported version")
         return self
@@ -277,7 +251,7 @@ class Font:
             self.from_dict(dict_, self.texture.size)
         return self
 
-    def save_as_font_strg(self, paks_folder):
+    def save_as_font_strg(self, resource_folder):
         if self.version == 4:
             buffer = struct.pack(">LL4L2?2L", self.MAGIC, self.version, self.width, self.height, self.vertical_offset,
                                  self.line_margin, self.tmp1, self.tmp2, self.tmp3, self.font_size)
@@ -290,10 +264,9 @@ class Font:
                 buffer += self.encode_character(character_pair) + struct.pack(">l", self.kerning[character_pair])
         else:
             raise Exception("Unsupported version")
-        self.texture.save_as_txtr([f"{paks_folder}/{using}/{self.texture_id}.TXTR" for using in self.usings])
-        for using in self.usings:
-            with open(f"{paks_folder}/{using}/{self.id}.FONT", "wb") as file:
-                file.write(buffer)
+        self.texture.save_as_txtr(f"{resource_folder}/{self.texture_id}.TXTR")
+        with open(f"{resource_folder}/{self.id}.FONT", "wb") as file:
+            file.write(buffer)
 
     def save_as_yaml_pngs(self, folder):
         with open(f"{folder}/Font.yaml", "wt", encoding="UTF-8") as file:
@@ -303,7 +276,6 @@ class Font:
     def from_dict(self, dict_, texture_size):
         self.id = dict_["ID"]
         self.version = dict_["Version"]
-        self.usings = dict_["Usings"]
         self.width = dict_["Width"]
         self.height = dict_["Height"]
         self.vertical_offset = dict_["Vertical offset"]
@@ -322,7 +294,6 @@ class Font:
     def get_dict(self):
         return {"ID":              self.id,
                 "Version":         self.version,
-                "Usings":          self.usings,
                 "Width":           self.width,
                 "Height":          self.height,
                 "Vertical offset": self.vertical_offset,
@@ -445,7 +416,7 @@ class FontTxtr:
         self.palette_colors = palette
         return self
 
-    def save_as_txtr(self, paths):
+    def save_as_txtr(self, path):
         buffer = struct.pack(">L2H2L2H", 4, self.size[0], self.size[1], 1, 2, 1, 16)
         for color in self.palette_colors:
             buffer += struct.pack(">H", color)
@@ -460,9 +431,8 @@ class FontTxtr:
             pixels.append(self.bits_to_int(bits))
         for i in range(0, len(pixels), 2):
             buffer += ((pixels[i] << 4) + pixels[i + 1]).to_bytes(1, "big")
-        for path in paths:
-            with open(path, "wb") as file:
-                file.write(buffer)
+        with open(path, "wb") as file:
+            file.write(buffer)
 
     def save_as_pngs(self, path):
         for i, layer in enumerate(self.images):
