@@ -3,6 +3,7 @@ from os.path import exists
 from argparse import ArgumentParser
 from math import ceil
 
+import zlib
 import struct
 import csv
 import yaml
@@ -12,8 +13,9 @@ from pygame import Surface, image
 class Main:
     def __init__(self):
         parser = ArgumentParser()
-        parser.add_argument("-e", "--extract", choices=["strgs", "fonts"], action="append", default=[])
+        parser.add_argument("-e", "--extract", choices=["strgs", "fonts", "paks"], action="append", default=[])
         parser.add_argument("-r", "--repack", choices=["strgs", "fonts"], action="append", default=[])
+        parser.add_argument("-gff", "--game_files_folder", default="MetroidPrime/files")
         parser.add_argument("-rf", "--resource_folder", default="resources")
         parser.add_argument("-sp", "--strgs_path", default="extracted/strgs.csv")
         parser.add_argument("-ff", "--fonts_folder", default="extracted/fonts")
@@ -27,6 +29,8 @@ class Main:
                 self.extract_strgs(arguments.resource_folder, arguments.strgs_path, arguments.additional_languages)
             elif format_ == "fonts":
                 self.extract_fonts(arguments.resource_folder, arguments.fonts_folder)
+            elif format_ == "paks":
+                self.extract_paks(arguments.game_files_folder, arguments.resource_folder)
         for format_ in arguments.repack:
             if format_ == "strgs":
                 self.repack_strgs(arguments.resource_folder, arguments.strgs_path, arguments.overwrite_languages)
@@ -34,21 +38,26 @@ class Main:
                 self.repack_fonts(arguments.resource_folder, arguments.fonts_folder)
 
     @staticmethod
+    def extract_paks(game_files_folder, resource_folder):
+        for pak in [file[:file.find(".")] for file in listdir(game_files_folder) if file.upper().endswith(".PAK")]:
+            Pak().from_pak(game_files_folder, pak).save_as_resource_folder(resource_folder)
+
+    @staticmethod
     def extract_strgs(resource_folder, strgs_path, additional_languages):
-        strgs = [Strg().open_strg(f"{resource_folder}/{file_name}") for file_name in listdir(resource_folder)
-                 if file_name.endswith(".STRG")]
+        strgs = [Strg().open_strg(f"{resource_folder}/files/{file_name}")
+                 for file_name in listdir(f"{resource_folder}/files") if file_name.endswith(".STRG")]
         Strg.save_as_csv(strgs_path, strgs, additional_languages)
 
     @staticmethod
     def repack_strgs(resources_folder, strgs_path, overwrite_languages):
         for strg in Strg.from_csv(strgs_path, overwrite_languages):
-            strg.save_as_strg(f"{resources_folder}/{strg.id}.STRG")
+            strg.save_as_strg(f"{resources_folder}/files/{strg.id}.STRG")
 
     @staticmethod
     def extract_fonts(resource_folder, fonts_folder):
-        font_paths = [file for file in listdir(resource_folder) if file.endswith(".FONT")]
+        font_paths = [file for file in listdir(f"{resource_folder}/files") if file.endswith(".FONT")]
         for path in font_paths:
-            font = Font().from_font_txtr(f"{resource_folder}/{path}")
+            font = Font().from_font_txtr(f"{resource_folder}/files/{path}")
             path = f"{fonts_folder}/{font.font_name} {font.font_size} {font.id}"
             if not exists(path):
                 makedirs(path)
@@ -100,6 +109,67 @@ class FileReader:
             nibbles.append(byte >> 4)
             nibbles.append(byte & 15)
         return nibbles
+
+
+class Pak:
+    def from_pak(self, game_folder, pak_name):
+        self.name = pak_name
+        with open(f"{game_folder}/{pak_name}.pak", "rb") as file:
+            reader = FileReader(file.read())
+        if reader.read(">HHL") != (3, 5, 0):
+            raise Exception(f"Invalid HEADER in pak {pak_name}")
+        self.asset_names = {}
+        for _ in range(reader.read(">L")[0]):
+            asset_type, asset_id, asset_name_length = reader.read(">4s2L")
+            asset_name = reader.read(f">{asset_name_length}s")[0].decode("ANSI")
+            self.asset_names[asset_name] = f"{hex(asset_id)[2:].upper()}.{asset_type.decode('ANSI')}"
+        self.assets = []
+        for _ in range(reader.read(">L")[0]):
+            compression_flag, asset_type, asset_id, asset_size, asset_offset = reader.read(">L4s3L")
+            self.assets.append(
+                Asset(asset_type, asset_id, reader.bytes[asset_offset: asset_offset + asset_size], compression_flag)
+            )
+        return self
+
+    def save_as_resource_folder(self, folder):
+        if not exists(f"{folder}/files"):
+            makedirs(f"{folder}/files")
+        for asset in self.assets:
+            asset.save(f"{folder}/files/{asset.id}.{asset.type}")
+        with open(f"{folder}/{self.name}.yaml", "wt") as file:
+            file.write(yaml.dump(self.get_info()))
+
+    def get_info(self):
+        return {
+            "Names": self.asset_names,
+            "Assets info": [asset.get_info() for asset in self.assets]
+        }
+
+
+class Asset:
+    def __init__(self, type_, id_, data, compression_flag):
+        self.type = type_.decode("ANSI")
+        self.id = hex(id_)[2:].upper()
+        self.data = data
+        if compression_flag == 0:
+            self.is_compressed = False
+        elif compression_flag == 1:
+            self.is_compressed = True
+        else:
+            raise Exception("Wrong compression flag")
+        if self.is_compressed:
+            self.data = zlib.decompress(self.data[4:])
+
+    def get_info(self):
+        return {
+            "ID": self.id,
+            "Type": self.type,
+            "Compressed": self.is_compressed
+        }
+
+    def save(self, path):
+        with open(path, "wb") as file:
+            file.write(self.data)
 
 
 class Strg:
@@ -161,8 +231,7 @@ class Strg:
     def from_csv(path, overwrite_languages):
         with open(path, "rt", encoding="UTF-8") as file:
             raw_data = [i for i in csv.reader(file, dialect="unix")]
-        overwrite_languages = {languages.split("2")[0]: languages.split("2")[1]
-                               for languages in overwrite_languages if languages != []}
+        overwrite_languages = {languages.split("2")[0]: languages.split("2")[1] for languages in overwrite_languages}
         version = int(raw_data[0][0].split("=")[-1])
         raw_data = raw_data[1:]
         strgs = []
