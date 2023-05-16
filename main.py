@@ -1,3 +1,4 @@
+import time
 from os import listdir, makedirs
 from os.path import exists
 from argparse import ArgumentParser
@@ -12,10 +13,12 @@ from pygame import Surface, image
 
 class Main:
     def __init__(self):
+        start_time = time.time()
         parser = ArgumentParser()
         parser.add_argument("-e", "--extract", choices=["strgs", "fonts", "paks"], action="append", default=[])
-        parser.add_argument("-r", "--repack", choices=["strgs", "fonts"], action="append", default=[])
-        parser.add_argument("-gff", "--game_files_folder", default="MetroidPrime/files")
+        parser.add_argument("-r", "--repack", choices=["strgs", "fonts", "paks"], action="append", default=[])
+        parser.add_argument("-gf", "--game_folder", default="MetroidPrime/files")
+        parser.add_argument("-mgf", "--modded_game_folder", default="MetroidPrimeModded/files")
         parser.add_argument("-rf", "--resource_folder", default="resources")
         parser.add_argument("-sp", "--strgs_path", default="extracted/strgs.csv")
         parser.add_argument("-ff", "--fonts_folder", default="extracted/fonts")
@@ -30,17 +33,36 @@ class Main:
             elif format_ == "fonts":
                 self.extract_fonts(arguments.resource_folder, arguments.fonts_folder)
             elif format_ == "paks":
-                self.extract_paks(arguments.game_files_folder, arguments.resource_folder)
+                self.extract_paks(arguments.game_folder, arguments.resource_folder)
         for format_ in arguments.repack:
             if format_ == "strgs":
                 self.repack_strgs(arguments.resource_folder, arguments.strgs_path, arguments.overwrite_languages)
             elif format_ == "fonts":
                 self.repack_fonts(arguments.resource_folder, arguments.fonts_folder)
+            elif format_ == "paks":
+                self.repack_paks(arguments.resource_folder, arguments.modded_game_folder)
+        print(f"Done in {round(time.time() - start_time, 3)} seconds")
 
     @staticmethod
     def extract_paks(game_files_folder, resource_folder):
+        resource_reader = AssetReader(resource_folder)
         for pak in [file[:file.find(".")] for file in listdir(game_files_folder) if file.upper().endswith(".PAK")]:
-            Pak().from_pak(game_files_folder, pak).save_as_resource_folder(resource_folder)
+            start_time = time.time()
+            print(f"Extracting pak {pak}", end="", flush=True)
+            Pak().from_pak(game_files_folder, pak, resource_reader).save_as_files_config(resource_folder)
+            print(f" (Done in {round(time.time() - start_time, 3)} seconds)")
+
+    @staticmethod
+    def repack_paks(resource_folder, modded_game_folder):
+        resource_reader = AssetReader(f"{resource_folder}/files")
+        for pak_config_name in [file for file in listdir(resource_folder) if file.lower().endswith(".yaml")]:
+            start_time = time.time()
+            print(f"Repacking pak {pak_config_name[:pak_config_name.lower().find('.yaml')]}", end="", flush=True)
+            with open(f"{resource_folder}/{pak_config_name}", "rb") as file:
+                pak_config = yaml.safe_load(file)
+            Pak().from_files_config(pak_config_name[:pak_config_name.lower().find(".yaml")],
+                                    resource_reader, pak_config).save_as_pak(modded_game_folder, resource_reader)
+            print(f" (Done in {round(time.time() - start_time, 3)} seconds)")
 
     @staticmethod
     def extract_strgs(resource_folder, strgs_path, additional_languages):
@@ -68,6 +90,41 @@ class Main:
         fonts = [Font().from_yaml_pngs(f"{fonts_folder}/{path}") for path in listdir(fonts_folder)]
         for font in fonts:
             font.save_as_font_strg(resource_folder)
+
+
+class AssetReader:
+    def __init__(self, folder=""):
+        self.folder = folder
+        self.resources = {}
+
+    def get(self, resource_name, align, compress=False):
+        data = self.compress_resource(self.resources[resource_name]) if compress else self.resources[resource_name]
+        return self.align(data) if align else data
+
+    @staticmethod
+    def compress_resource(data):
+        return struct.pack(">L", len(data)) + zlib.compress(data)
+
+    @staticmethod
+    def decompress_resource(data):
+        return zlib.decompress(data[4:])
+
+    @staticmethod
+    def align(data, align_byte=b"\xFF", alignment=32):
+        return data + (-len(data) % alignment) * align_byte
+
+    def read_file(self, resource_name, is_compressed=False):
+        if resource_name not in self.resources:
+            with open(f"{self.folder}/{resource_name}", "rb") as file:
+                self.resources[resource_name] = file.read()
+            if is_compressed:
+                self.resources[resource_name] = self.decompress_resource(self.resources[resource_name])
+
+    def set_raw_data(self, resource_name, data, is_compressed):
+        if resource_name not in self.resources:
+            self.resources[resource_name] = data
+            if is_compressed:
+                self.resources[resource_name] = self.decompress_resource(self.resources[resource_name])
 
 
 class FileReader:
@@ -112,32 +169,63 @@ class FileReader:
 
 
 class Pak:
-    def from_pak(self, game_folder, pak_name):
+    def from_pak(self, game_folder, pak_name, resource_reader):
         self.name = pak_name
         with open(f"{game_folder}/{pak_name}.pak", "rb") as file:
             reader = FileReader(file.read())
-        if reader.read(">HHL") != (3, 5, 0):
+        if reader.read(">2HL") != (3, 5, 0):
             raise Exception(f"Invalid HEADER in pak {pak_name}")
         self.asset_names = {}
         for _ in range(reader.read(">L")[0]):
             asset_type, asset_id, asset_name_length = reader.read(">4s2L")
             asset_name = reader.read(f">{asset_name_length}s")[0].decode("ANSI")
-            self.asset_names[asset_name] = f"{hex(asset_id)[2:].upper()}.{asset_type.decode('ANSI')}"
+            self.asset_names[asset_name] = f"{hex(asset_id)[2:].upper().rjust(8, '0')}.{asset_type.decode('ANSI')}"
         self.assets = []
         for _ in range(reader.read(">L")[0]):
             compression_flag, asset_type, asset_id, asset_size, asset_offset = reader.read(">L4s3L")
             self.assets.append(
-                Asset(asset_type, asset_id, reader.bytes[asset_offset: asset_offset + asset_size], compression_flag)
+                Asset(asset_type.decode("ANSI"), hex(asset_id)[2:].upper().rjust(8, '0'), compression_flag != 0,
+                      resource_reader)
             )
+            resource_reader.set_raw_data(self.assets[-1].name, reader.bytes[asset_offset: asset_offset + asset_size],
+                                         self.assets[-1].is_compressed)
         return self
 
-    def save_as_resource_folder(self, folder):
+    def from_files_config(self, pak_name, resource_reader, pak_config):
+        self.name = pak_name
+        self.asset_names = pak_config["Names"]
+        self.assets = []
+        for asset in pak_config["Assets info"]:
+            self.assets.append(Asset(asset["Type"], asset["ID"], asset["Compressed"], resource_reader))
+            resource_reader.read_file(f"{asset['ID']}.{asset['Type']}")
+        return self
+
+    def save_as_pak(self, game_folder, resource_reader):
+        header = struct.pack(">2HL", 3, 5, 0)
+        name_table = struct.pack(">L", len(self.asset_names))
+        for name in self.asset_names:
+            id_, type_ = self.asset_names[name].split(".")
+            name_table += type_.encode("ANSI") + struct.pack(">LL", int(id_, 16), len(name)) + name.encode("ANSI")
+        asset_table = struct.pack(">L", len(self.assets))
+        asset_offset = len(header) + len(name_table) + 4 + 20 * len(self.assets)
+        assets = b"\x00" * (-asset_offset % 32)
+        asset_offset += len(assets)
+        for asset in self.assets:
+            asset_data = resource_reader.get(asset.name, True, asset.is_compressed)
+            asset_table += struct.pack(">L4s3L", 1 if asset.is_compressed else 0, asset.type.encode("ANSI"),
+                                       int(asset.id, 16), len(asset_data), asset_offset)
+            assets += asset_data
+            asset_offset += len(asset_data)
+        with open(f"{game_folder}/{self.name}.pak", "wb") as file:
+            file.write(header + name_table + asset_table + assets)
+
+    def save_as_files_config(self, folder):
         if not exists(f"{folder}/files"):
             makedirs(f"{folder}/files")
         for asset in self.assets:
             asset.save(f"{folder}/files/{asset.id}.{asset.type}")
         with open(f"{folder}/{self.name}.yaml", "wt") as file:
-            file.write(yaml.dump(self.get_info()))
+            file.write(yaml.dump(self.get_info(), sort_keys=False))
 
     def get_info(self):
         return {
@@ -147,18 +235,12 @@ class Pak:
 
 
 class Asset:
-    def __init__(self, type_, id_, data, compression_flag):
-        self.type = type_.decode("ANSI")
-        self.id = hex(id_)[2:].upper()
-        self.data = data
-        if compression_flag == 0:
-            self.is_compressed = False
-        elif compression_flag == 1:
-            self.is_compressed = True
-        else:
-            raise Exception("Wrong compression flag")
-        if self.is_compressed:
-            self.data = zlib.decompress(self.data[4:])
+    def __init__(self, type_, id_, is_compressed, resource_reader):
+        self.type = type_
+        self.id = id_
+        self.resource_reader = resource_reader
+        self.is_compressed = is_compressed
+        self.name = f"{self.id}.{self.type}"
 
     def get_info(self):
         return {
@@ -169,7 +251,7 @@ class Asset:
 
     def save(self, path):
         with open(path, "wb") as file:
-            file.write(self.data)
+            file.write(self.resource_reader.get(self.name, False))
 
 
 class Strg:
@@ -225,7 +307,7 @@ class Strg:
             language_offset += 4 + string_table_size
         buffer = header + language_table + string_table
         with open(path, "wb") as file:
-            file.write(buffer + b"\xFF" * (32 - len(buffer) % 32))
+            file.write(buffer)
     
     @staticmethod
     def from_csv(path, overwrite_languages):
@@ -322,7 +404,7 @@ class Font:
 
     def save_as_font_strg(self, resource_folder):
         if self.version == 4:
-            buffer = struct.pack(">LL4L2?2L", self.MAGIC, self.version, self.width, self.height, self.vertical_offset,
+            buffer = struct.pack(">2L4L2?2L", self.MAGIC, self.version, self.width, self.height, self.vertical_offset,
                                  self.line_margin, self.tmp1, self.tmp2, self.tmp3, self.font_size)
             buffer += self.font_name.encode("ANSI") + b"\x00"
             buffer += struct.pack(">LLL", int(self.texture_id, 16), self.texture_mode, len(self.glyphs))
