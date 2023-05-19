@@ -289,7 +289,6 @@ class Strg:
     def save_as_strg(self, path):
         if self.version > 0:
             raise Exception(f"Unsupported VERSION")
-        print(self.strings)
         header = struct.pack(">4L", self.MAGIC, self.version, len(self.strings), self.strings_count)
         language_table = b""
         string_table = b""
