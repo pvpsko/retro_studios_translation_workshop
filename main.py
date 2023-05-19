@@ -73,7 +73,7 @@ class Main:
     @staticmethod
     def repack_strgs(resources_folder, strgs_path, overwrite_languages):
         for strg in Strg.from_csv(strgs_path, overwrite_languages):
-            strg.save_as_strg(f"{resources_folder}/files/{strg.id}.STRG")
+            strg.save_as_strg(f"{resources_folder}/files/{strg.id[2:]}.STRG")
 
     @staticmethod
     def extract_fonts(resource_folder, fonts_folder):
@@ -289,6 +289,7 @@ class Strg:
     def save_as_strg(self, path):
         if self.version > 0:
             raise Exception(f"Unsupported VERSION")
+        print(self.strings)
         header = struct.pack(">4L", self.MAGIC, self.version, len(self.strings), self.strings_count)
         language_table = b""
         string_table = b""
@@ -354,9 +355,10 @@ class Strg:
             writer.writerow([f"Version={strgs[0].version}"])
             for strg in strgs:
                 writer.writerow([])
-                writer.writerow([strg.id] + [str(lang)[2:-1] for lang in strg.strings] + additional_langs)
+                writer.writerow(["0x" + strg.id] + [str(lang)[2:-1] for lang in strg.strings] + additional_langs)
                 for string in range(strg.strings_count):
-                    writer.writerow([string] + [strg.strings[language][string] for language in strg.strings])
+                    writer.writerow([str(string)] + [strg.strings[language][string] for language in strg.strings] +
+                                    ["" for _ in additional_langs])
 
     @property
     def strings_count(self):
