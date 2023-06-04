@@ -2,7 +2,7 @@ import time
 from os import listdir, makedirs
 from os.path import exists
 from argparse import ArgumentParser
-from math import ceil
+from math import ceil, fabs
 
 import zlib
 import struct
@@ -388,10 +388,11 @@ class Font:
             self.font_name = reader.read_ansi()
             texture_id, self.texture_mode, glyph_count = reader.read(">3L")
             self.texture_id = hex(texture_id)[2:]
-            self.glyphs = [FontGlyph().from_data(*i[:-1]) for i in reader.iter_read(">H4f7BH", glyph_count)]
+            self.texture = FontTxtr().from_txtr(f"{resource_folder}/{self.texture_id}.TXTR")
+            self.glyphs = [FontGlyph().from_data(*i[:11], self.texture.size)
+                           for i in reader.iter_read(">H4f7BH", glyph_count)]
             self.kerning = {self.decode_character(i[0]) + self.decode_character(i[1]): i[2]
                             for i in reader.iter_read(">2Hl", reader.read(">L")[0])}
-            self.texture = FontTxtr().from_txtr(f"{resource_folder}/{self.texture_id}.TXTR")
         else:
             raise Exception("Unsupported version")
         return self
@@ -458,7 +459,7 @@ class Font:
                 "Texture id":      self.texture_id,
                 "Texture mode":    self.texture_mode,
                 "Texture palette": self.texture.palette_colors,
-                "Glyphs":          {glyph.character: glyph.get_dict(self.texture.size) for glyph in self.glyphs},
+                "Glyphs":          {glyph.character: glyph.get_dict() for glyph in self.glyphs},
                 "Kerning":        {pair: self.kerning[pair] for pair in self.kerning if self.kerning[pair] != 0}}
 
     @staticmethod
@@ -472,10 +473,12 @@ class Font:
 
 class FontGlyph:
     def from_data(self, character, left, top, right, bottom, layer_index, left_padding, print_head_advance,
-                  right_padding, width, height, vertical_offset):
-        self.character = Font.decode_character(character) if type(character) == int else character
+                  right_padding, width, height, vertical_offset, texture_size):
+        self.character = Font.decode_character(character)
         self.top_left_uv = [left, top]
         self.bottom_right_uv = [right, bottom]
+        self.top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
+        self.bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
         self.layer_index = layer_index
         self.padding = [left_padding, right_padding]
         self.print_head_advance = print_head_advance
@@ -484,20 +487,19 @@ class FontGlyph:
         return self
 
     def from_dict(self, character, dict_, texture_size):
-        top_left_uv = self.translate_xy_to_uv([dict_["Left"], dict_["Top"]], texture_size)
-        bottom_right_uv = self.translate_xy_to_uv([dict_["Right"], dict_["Bottom"]], texture_size)
-        return self.from_data(character,
-                              top_left_uv[0],
-                              top_left_uv[1],
-                              bottom_right_uv[0],
-                              bottom_right_uv[1],
-                              dict_["Layer"],
-                              dict_["Left padding"],
-                              dict_["Print head advance"],
-                              dict_["Right padding"],
-                              dict_["Width"],
-                              dict_["Height"],
-                              dict_["Vertical offset"])
+        self.top_left_xy = [dict_["Left"], dict_["Top"]]
+        self.bottom_right_xy = [dict_["Right"], dict_["Bottom"]]
+        self.top_left_uv = self.translate_xy_to_uv([dict_["Left"], dict_["Top"]], texture_size)
+        self.bottom_right_uv = self.translate_xy_to_uv([dict_["Right"], dict_["Bottom"]], texture_size)
+        self.character = character
+        self.padding = [dict_["Left padding"] if "Left padding" in dict_ else dict_["Padding"],
+                        dict_["Right padding"] if "Right padding" in dict_ else dict_["Padding"]]
+        self.layer_index = dict_["Layer"]
+        self.size = [dict_["Width"] if "Width" in dict_ else int(fabs(dict_["Right"] - dict_["Left"])),
+                     dict_["Height"] if "Width" in dict_ else int(fabs(dict_["Bottom"] - dict_["Top"]))]
+        self.print_head_advance = dict_["Print head advance"] if "Print head advance" in dict_ else self.size[0]
+        self.vertical_offset = dict_["Vertical offset"] if "Vertical offset" in dict_ else self.size[1]
+        return self
 
     def get_bytes(self, kerning, version):
         buffer = self.character.encode("UTF-16BE")
@@ -505,28 +507,36 @@ class FontGlyph:
                               self.bottom_right_uv[0], self.bottom_right_uv[1])
         if version >= 4:
             buffer += struct.pack(">B", self.layer_index)
-        buffer += struct.pack(">6BH", self.padding[0], self.print_head_advance, self.padding[1], self.size[0],
+        buffer += struct.pack(">3b3BH", self.padding[0], self.print_head_advance, self.padding[1], self.size[0],
                               self.size[1], self.vertical_offset, self.get_kerning_start_index(self.character, kerning))
         return buffer
 
-    def get_dict(self, texture_size):
-        top_left_xy = self.translate_uv_to_xy(self.top_left_uv, texture_size)
-        bottom_right_xy = self.translate_uv_to_xy(self.bottom_right_uv, texture_size)
-        return {"Left":               top_left_xy[0],
-                "Right":              bottom_right_xy[0],
-                "Top":                top_left_xy[1],
-                "Bottom":             bottom_right_xy[1],
-                "Layer":              self.layer_index,
-                "Left padding":       self.padding[0],
-                "Right padding":      self.padding[1],
-                "Print head advance": self.print_head_advance,
-                "Width":              self.size[0],
-                "Height":             self.size[1],
-                "Vertical offset":    self.vertical_offset}
+    def get_dict(self):
+        dict_ = {}
+        if self.size[0] != int(fabs(self.bottom_right_xy[0] - self.top_left_xy[0])):
+            dict_["Width"] = self.size[0]
+        if self.size[1] != int(fabs(self.bottom_right_xy[1] - self.top_left_xy[1])):
+            dict_["Height"] = self.size[1]
+        dict_["Left"] = self.top_left_xy[0]
+        dict_["Right"] = self.bottom_right_xy[0]
+        dict_["Top"] = self.top_left_xy[1]
+        dict_["Bottom"] = self.bottom_right_xy[1]
+        dict_["Layer"] = self.layer_index
+        if self.padding[0] == self.padding[1]:
+            dict_["Padding"] = self.padding[0]
+        else:
+            dict_["Left padding"] = self.padding[0]
+            dict_["Right padding"] = self.padding[1]
+        if self.print_head_advance != self.size[0]:
+            dict_["Print head advance"] = self.print_head_advance
+        if self.vertical_offset != self.size[1]:
+            dict_["Vertical offset"] = self.vertical_offset
+        return dict_
 
     @staticmethod
     def translate_uv_to_xy(uv, texture_size):
-        return [uv[0] * texture_size[0], uv[1] * texture_size[1]]
+        x, y = uv[0] * texture_size[0], uv[1] * texture_size[1]
+        return [int(x) if x.is_integer() else x, int(y) if y.is_integer() else y]
 
     @staticmethod
     def translate_xy_to_uv(xy, texture_size):
