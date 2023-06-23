@@ -89,7 +89,7 @@ class Main:
     def repack_fonts(resource_folder, fonts_folder):
         fonts = [Font().from_yaml_pngs(f"{fonts_folder}/{path}") for path in listdir(fonts_folder)]
         for font in fonts:
-            font.save_as_font_strg(resource_folder)
+            font.save_as_font_strg(f"{resource_folder}/files")
 
 
 class AssetReader:
@@ -322,7 +322,9 @@ class Strg:
             if Strg._is_row_empty(raw_data[row_index - 1]):
                 languages = Strg._rip_empty_languages(row[1:])
                 strgs.append(Strg(row[0], version))
-                strgs[-1].strings = {language: [] for language in languages if language not in overwrite_languages}
+                strgs[-1].strings = {language: [] for language in languages
+                                     if language not in overwrite_languages
+                                     or language in overwrite_languages.values()}
             elif not Strg._is_row_empty(row):
                 for column_index, cell in enumerate(row[1: len(languages) + 1]):
                     language = languages[column_index]
@@ -330,6 +332,8 @@ class Strg:
                         strgs[-1].strings[overwrite_languages[language]].append(cell)
                     elif language not in overwrite_languages.values():
                         strgs[-1].strings[language].append(cell)
+                if [] in strgs[-1].strings.values():
+                    print(strgs[-1].id, strgs[-1].strings)
         return strgs
 
     @staticmethod
